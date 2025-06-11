@@ -1,71 +1,64 @@
-import { Link } from 'react-router-dom';
-import { useState, type FormEvent } from 'react';
-import { useDances } from '../hooks/useDanceStore';
+import { useDances, useCreateDance, useDeleteDance } from "../api/dances";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 export default function DashboardPage() {
-  const { dances, dispatch } = useDances();
-  const [newTitle, setNewTitle] = useState('');
+  const navigate = useNavigate();
+  const { data: dances, isLoading, isError } = useDances();
+  const createDance = useCreateDance();
+  const deleteDance = useDeleteDance();
 
-  /* ---------- handlers ---------- */
-  function handleAdd(e: FormEvent) {
+  const [newName, setNewName] = useState("");
+  const [newCount, setNewCount] = useState(5);
+
+  function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    const trimmed = newTitle.trim();
-    if (trimmed) {
-      dispatch({ type: 'add', title: trimmed });
-      setNewTitle('');
-    }
+    createDance.mutate({ name: newName, numberOfDancers: newCount });
+    setNewName("");
+    setNewCount(5);
   }
 
-  function handleDelete(id: string) {
-    if (confirm('Delete this dance?')) dispatch({ type: 'delete', danceId: id });
-  }
+  if (isLoading) return <p>Loading dances...</p>;
+  if (isError) return <p>Failed to load dances.</p>;
 
-  /* ---------- render ---------- */
   return (
     <main>
-      {/* quick-add form */}
-      <form onSubmit={handleAdd} className="panel add-form">
+      <h1>Your Dances</h1>
+
+      <form onSubmit={handleCreate}>
         <label>
-          <span>Add a new dance</span>
+          Name:
           <input
-            value={newTitle}
-            onChange={e => setNewTitle(e.target.value)}
-            placeholder="Title…"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            required
           />
         </label>
-        <button type="submit" className="btn-sm">Add</button>
+        <label>
+          # of Dancers:
+          <input
+            type="number"
+            value={newCount}
+            onChange={(e) => setNewCount(Number(e.target.value))}
+            min={1}
+            max={20}
+            required
+          />
+        </label>
+        <button type="submit" disabled={createDance.isPending}>
+          Create Dance
+        </button>
       </form>
 
-      {/* list of existing dances */}
-      <section className="dance-list">
-        {dances.map(d => (
-          <article key={d.id} className="card dance-item">
-            <div className="meta">
-              <h3>{d.title}</h3>
-              <p>{d.dancers.length} {d.dancers.length === 1 ? 'dancer' : 'dancers'}</p>
-            </div>
-
-            <div className="item-actions">
-              <Link to={`/editor/${d.id}`} className="btn-sm">Edit</Link>
-              <button
-                type="button"
-                className="btn-icon"
-                aria-label="Delete dance"
-                title="Delete dance"
-                onClick={() => handleDelete(d.id)}
-              >
-                🗑️
-              </button>
-            </div>
-          </article>
+      <ul>
+        {dances?.map((dance) => (
+          <li key={dance._id}>
+            <strong>{dance.name}</strong> ({dance.numberOfDancers} dancers)
+            <button onClick={() => navigate(`/editor/${dance._id}`)}>Edit</button>
+            <button onClick={() => deleteDance.mutate(dance._id)}>Delete</button>
+          </li>
         ))}
-
-        {dances.length === 0 && (
-          <p style={{ opacity: .7, paddingTop: '1rem' }}>
-            No dances yet — add one above!
-          </p>
-        )}
-      </section>
+      </ul>
     </main>
   );
 }
