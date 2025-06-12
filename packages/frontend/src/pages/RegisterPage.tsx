@@ -1,3 +1,4 @@
+// packages/frontend/src/pages/RegisterPage.tsx
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -32,15 +33,40 @@ export default function RegisterPage() {
   }
 
   return (
-    <main>
-      <h1>Register</h1>
-      <form onSubmit={handleRegister}>
-        <label>Username <input value={username} onChange={e => setUsername(e.target.value)} required /></label><br />
-        <label>Password <input type="password" value={password} onChange={e => setPassword(e.target.value)} required /></label><br />
-        <button type="submit">Register</button>
-        {error && <p style={{ color: "red" }}>{error}</p>}
-      </form>
-      <p>Already have an account? <Link to="/login">Log in</Link></p>
-    </main>
+    <div className="auth-container">
+      <div className="auth-panel">
+        <h1>Register</h1>
+        <form onSubmit={handleRegister}>
+          <label>
+            Username
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </label>
+          <button type="submit" className="btn-sm">
+            Register
+          </button>
+          {error && (
+            <p style={{ color: "red", textAlign: "center" }}>{error}</p>
+          )}
+        </form>
+        <div className="auth-toggle">
+          <p>
+            Already have an account? <Link to="/login">Log in</Link>
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }

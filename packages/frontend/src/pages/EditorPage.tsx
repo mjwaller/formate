@@ -1,11 +1,12 @@
 // packages/frontend/src/pages/EditorPage.tsx
 import React, { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   useDanceById,
   useUpdateFormation,
   useAddFormation,
   useDeleteFormation,
+  useUpdateDance,
 } from "../api/dances";
 
 interface Dot {
@@ -15,51 +16,75 @@ interface Dot {
 }
 
 export default function EditorPage() {
-  const { danceId } = useParams();
+  const { danceId } = useParams<{ danceId: string }>();
   const { data: dance, isLoading } = useDanceById(danceId!);
   const saveFormation = useUpdateFormation();
   const addFormation = useAddFormation();
   const deleteFormation = useDeleteFormation();
+  const updateDance = useUpdateDance();
 
-  // Local state: array of formations and which index is active
   const [formations, setFormations] = useState<Dot[][]>([]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [positions, setPositions] = useState<Dot[]>([]);
   const [dragging, setDragging] = useState<number | null>(null);
 
-  const gridRef = useRef<HTMLDivElement>(null);
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editCount, setEditCount] = useState(0);
 
-  // Seed local formations from server data
+  const gridRef = useRef<HTMLDivElement>(null);
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // 1) Seed formations once
   useEffect(() => {
-    if (dance?.formations) {
+    if (dance?.formations && formations.length === 0) {
       const all = dance.formations.map((f) => [...f.positions]);
       setFormations(all);
       setCurrentIdx(all.length - 1);
       setPositions(all[all.length - 1]);
     }
-  }, [dance]);
+  }, [dance, formations.length]);
 
-  // Sync positions when currentIdx changes
+  // 2) Sync positions on index change
   useEffect(() => {
     if (formations[currentIdx]) {
       setPositions(formations[currentIdx]);
     }
   }, [formations, currentIdx]);
 
-  if (isLoading || !dance) return <p>Loading...</p>;
+  // 3) Auto‐save with debounce, update local copy
+  useEffect(() => {
+    if (!dance) return;
+    clearTimeout(debounceTimer.current!);
+    debounceTimer.current = setTimeout(() => {
+      const f = dance.formations[currentIdx];
+      saveFormation.mutate({
+        danceId: dance._id,
+        formationId: f.id,
+        positions,
+      });
+      setFormations((all) => {
+        const next = [...all];
+        next[currentIdx] = [...positions];
+        return next;
+      });
+    }, 500);
+    return () => clearTimeout(debounceTimer.current!);
+  }, [positions, currentIdx, dance, saveFormation]);
+
+  if (isLoading || !dance) return <p>Loading…</p>;
 
   // Drag handlers
-  const handleMouseDown = (idx: number) => setDragging(idx);
-  const handleMouseUp = () => setDragging(null);
-  const handleMouseMove = (ev: React.MouseEvent) => {
+  const onMouseDown = (i: number) => setDragging(i);
+  const onMouseUp = () => setDragging(null);
+  const onMouseMove = (e: React.MouseEvent) => {
     if (dragging === null || !gridRef.current) return;
-    const rect = gridRef.current.getBoundingClientRect();
-    let x = ev.clientX - rect.left;
-    let y = ev.clientY - rect.top;
-    x = Math.max(0, Math.min(rect.width, x));
-    y = Math.max(0, Math.min(rect.height, y));
-    const xp = (x / rect.width) * 100;
-    const yp = (y / rect.height) * 100;
+    const r = gridRef.current.getBoundingClientRect();
+    let x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+    let y = Math.max(0, Math.min(r.height, e.clientY - r.top));
+    const xp = (x / r.width) * 100;
+    const yp = (y / r.height) * 100;
     setPositions((arr) =>
       arr.map((p) =>
         p.dancerIndex === dragging ? { ...p, x: xp, y: yp } : p
@@ -67,24 +92,9 @@ export default function EditorPage() {
     );
   };
 
-  // Save current formation (only updates that one locally)
-  const handleSave = () => {
-    const formation = dance.formations[currentIdx];
-    saveFormation.mutate({
-      danceId: dance._id,
-      formationId: formation.id,
-      positions,
-    });
-    setFormations((all) => {
-      const next = [...all];
-      next[currentIdx] = [...positions];
-      return next;
-    });
-  };
-
-  // Add a new formation (clone last)
-  const handleAddFormation = () => {
-    addFormation.mutate(dance._id, {
+  // Add / Delete formations
+  const onAdd = () => {
+    addFormation.mutate(danceId!, {
       onSuccess: (newF) => {
         setFormations((all) => {
           const updated = [...all, newF.positions];
@@ -94,18 +104,15 @@ export default function EditorPage() {
       },
     });
   };
-
-  // Delete the current formation
-  const handleDeleteFormation = () => {
-    const formation = dance.formations[currentIdx];
+  const onDelete = () => {
+    const f = dance.formations[currentIdx];
     deleteFormation.mutate(
-      { danceId: dance._id, formationId: formation.id },
+      { danceId: danceId!, formationId: f.id },
       {
         onSuccess: () => {
           setFormations((all) => {
             const filtered = all.filter((_, i) => i !== currentIdx);
-            const newIdx = Math.min(filtered.length - 1, currentIdx);
-            setCurrentIdx(Math.max(0, newIdx));
+            setCurrentIdx((i) => Math.min(filtered.length - 1, i));
             return filtered;
           });
         },
@@ -113,22 +120,89 @@ export default function EditorPage() {
     );
   };
 
+  // Open modal and seed fields
+  const openModal = () => {
+    setEditName(dance.name);
+    setEditCount(dance.numberOfDancers);
+    setIsModalOpen(true);
+  };
+
+  // Apply modal changes
+  const applyChanges = () => {
+    if (!dance) return;
+    const oldCount = dance.numberOfDancers;
+    updateDance.mutate(
+      { danceId: danceId!, name: editName, numberOfDancers: editCount },
+      {
+        onSuccess: () => {
+          setFormations((all) => {
+            if (editCount < oldCount) {
+              // shrink: remove high-index dancers
+              return all.map((f) =>
+                f.filter((d) => d.dancerIndex < editCount)
+              );
+            } else if (editCount > oldCount) {
+              // grow: append new dancers at back line
+              return all.map((f) => {
+                const next = [...f];
+                for (let i = f.length; i < editCount; i++) {
+                  const x =
+                    editCount > 1 ? (i / (editCount - 1)) * 100 : 50;
+                  next.push({ dancerIndex: i, x, y: 100 });
+                }
+                return next;
+              });
+            }
+            return all;
+          });
+          setIsModalOpen(false);
+        },
+      }
+    );
+  };
+
   return (
-    <main>
+    <main style={{ padding: "1rem" }}>
+      {/* Back + Edit */}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "1rem",
+        }}
+      >
+        <Link to="/" aria-label="Back to dashboard">
+          ← Back
+        </Link>
+        <button className="btn-sm" onClick={openModal}>
+          ✎ Edit Dance Info
+        </button>
+      </div>
+
       <h1>{dance.name}</h1>
 
       {/* Controls */}
-      <div style={{ marginBottom: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "center",
+          gap: "0.5rem",
+          margin: "1rem 0",
+        }}
+      >
         <button
+          className="btn-sm"
           onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
           disabled={currentIdx === 0}
         >
           ← Prev
         </button>
-        <span style={{ margin: "0 1em" }}>
+        <span>
           Formation {currentIdx + 1} of {formations.length}
         </span>
         <button
+          className="btn-sm"
           onClick={() =>
             setCurrentIdx((i) => Math.min(formations.length - 1, i + 1))
           }
@@ -136,60 +210,138 @@ export default function EditorPage() {
         >
           Next →
         </button>
-        <button onClick={handleAddFormation} style={{ margin: "0 1em" }}>
+        <button className="btn-sm" onClick={onAdd}>
           + Add Formation
         </button>
         <button
-          onClick={handleDeleteFormation}
+          className="btn-sm"
+          onClick={onDelete}
           disabled={formations.length <= 1}
         >
           🗑️ Delete Formation
         </button>
       </div>
 
-      {/* Draggable Grid */}
+      {/* Stage Directions + Grid */}
+      <div style={{ textAlign: "center", opacity: 0.8, marginBottom: "0.5rem" }}>
+        Backstage
+      </div>
       <div
-        ref={gridRef}
         style={{
-          width: "100%",
-          maxWidth: 600,
-          height: 600,
-          border: "1px solid lightgray",
-          position: "relative",
-          userSelect: "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
         }}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
       >
-        {positions.map((p) => {
-          const left = (p.x / 100) * 600;
-          const top = (p.y / 100) * 600;
-          return (
-            <div
-              key={p.dancerIndex}
-              onMouseDown={() => handleMouseDown(p.dancerIndex)}
-              style={{
-                width: 20,
-                height: 20,
-                borderRadius: "50%",
-                backgroundColor: "red",
-                border: "2px solid lime",
-                position: "absolute",
-                left,
-                top,
-                transform: "translate(-50%, -50%)",
-                cursor: "grab",
-                zIndex: 10,
-              }}
-              title={`Dancer ${p.dancerIndex + 1}`}
-            />
-          );
-        })}
+        <div
+          style={{
+            transform: "rotate(-90deg)",
+            opacity: 0.8,
+            marginRight: "0.3rem",
+          }}
+        >
+          Stage Right
+        </div>
+        <div
+          id="grid-box"
+          ref={gridRef}
+          style={{
+            width: 600,
+            height: 600,
+            position: "relative",
+            userSelect: "none",
+            backgroundImage: `
+              linear-gradient(to right, rgba(0,0,0,0.3) 1px, transparent 1px),
+              linear-gradient(to bottom, rgba(0,0,0,0.3) 1px, transparent 1px)
+            `,
+            backgroundSize: "10% 100%, 100% 10%",
+            border: "2px solid var(--purple-700)",
+          }}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+        >
+          {positions.map((p) => {
+            const left = (p.x / 100) * 600;
+            const top = (p.y / 100) * 600;
+            return (
+              <div
+                key={p.dancerIndex}
+                onMouseDown={() => onMouseDown(p.dancerIndex)}
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  backgroundColor: "var(--purple-500)",
+                  color: "var(--color-on-primary)",
+                  fontSize: "0.75rem",
+                  fontWeight: "bold",
+                  textAlign: "center",
+                  lineHeight: "28px",
+                  position: "absolute",
+                  left,
+                  top,
+                  transform: "translate(-50%, -50%)",
+                  cursor: "grab",
+                  zIndex: 10,
+                }}
+                title={`Dancer ${p.dancerIndex + 1}`}
+              >
+                {p.dancerIndex + 1}
+              </div>
+            );
+          })}
+        </div>
+        <div
+          style={{
+            transform: "rotate(90deg)",
+            opacity: 0.8,
+            marginLeft: "0.3rem",
+          }}
+        >
+          Stage Left
+        </div>
+      </div>
+      <div style={{ textAlign: "center", opacity: 0.8, marginTop: "0.5rem" }}>
+        Audience
       </div>
 
-      <button onClick={handleSave} style={{ marginTop: 8 }}>
-        Save Formation
-      </button>
+      {/* Edit Dance Info Modal */}
+      {isModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h2>Edit Dance Info</h2>
+            <label>
+              Name
+              <input
+                type="text"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </label>
+            <label>
+              Number of Dancers
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={editCount}
+                onChange={(e) => setEditCount(Number(e.target.value))}
+              />
+            </label>
+            <div className="modal-buttons">
+              <button
+                className="btn-sm"
+                onClick={() => setIsModalOpen(false)}
+              >
+                Cancel
+              </button>
+              <button className="btn-sm" onClick={applyChanges}>
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

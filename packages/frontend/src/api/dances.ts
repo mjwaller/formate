@@ -18,6 +18,7 @@ export interface Formation {
 }
 
 // Fetch all dances
+// packages/frontend/src/api/dances.ts
 export function useDances() {
   const { token } = useAuth();
   return useQuery<Dance[]>({
@@ -29,8 +30,10 @@ export function useDances() {
       if (!res.ok) throw new Error("Failed to fetch dances");
       return res.json();
     },
+    refetchOnMount: "always",
   });
 }
+
 
 // Create a new dance
 export function useCreateDance() {
@@ -152,7 +155,59 @@ export function useUpdateFormation() {
     });
   }
 
-// packages/frontend/src/api/dances.ts continued...
+  export function useUpdateDance() {
+    const { token } = useAuth();
+    const queryClient = useQueryClient();
+  
+    return useMutation<
+      // TData:
+      { danceId: string; name: string; numberOfDancers: number },
+      // TError:
+      Error,
+      // TVariables:
+      { danceId: string; name: string; numberOfDancers: number }
+    >({
+      mutationFn: async ({ danceId, name, numberOfDancers }) => {
+        const res = await fetch(`/api/dances/${danceId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ name, numberOfDancers }),
+        });
+        if (!res.ok) {
+          // try to parse error message, or fallback
+          const errBody = await res.json().catch(() => null);
+          throw new Error(errBody?.message || "Failed to update dance");
+        }
+        return { danceId, name, numberOfDancers };
+      },
+      onSuccess: (data) => {
+        const { danceId, name, numberOfDancers } = data;
+  
+        // 1) update dances list
+        queryClient.setQueryData<Dance[]>(
+          ["dances"],
+          (old) =>
+            old?.map((d) =>
+              d._id === danceId
+                ? { ...d, name, numberOfDancers }
+                : d
+            ) ?? []
+        );
+  
+        // 2) update individual dance cache
+        queryClient.setQueryData<Dance>(
+          ["dance", danceId],
+          (old) =>
+            old
+              ? { ...old, name, numberOfDancers }
+              : old!
+        );
+      },
+    });
+  }
 
 // Add a new formation (optimistic)
 export function useAddFormation() {
